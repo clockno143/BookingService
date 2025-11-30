@@ -88,13 +88,13 @@ async def cancel_booking(booking_id: str, session: AsyncSession):
     if not booking:
         return {"status": "NOT_FOUND", "message": "Booking not found"}
 
-    if booking.status == "cancelled":
+    if booking.status == "canceled":
         return {"status": "ALREADY_CANCELLED", "message": "Booking is already cancelled"}
 
     # 2. Update booking status to cancelled
-    booking.status = "cancelled"
+    booking.status = "canceled"
     await session.commit()
-    
+    return {"status":"CANCELLED_SUCCESSFULLY","message": "Booking  cancelled successfully","event_id": booking.event_id}
 async def promote_waiting_booking(event_id: str, session: AsyncSession):
     """
     Promote the earliest waiting booking (if any) for a given event.
@@ -107,17 +107,29 @@ async def promote_waiting_booking(event_id: str, session: AsyncSession):
             Booking.status == "waiting"
         )
         .order_by(Booking.booking_time.asc())
+        .limit(1)  # <-- only fetch the earliest waiting booking
     )
-    waiting_booking = (await session.execute(stmt_waiting)).scalar_one_or_none()
+    result = await session.execute(stmt_waiting)
+    waiting_booking = result.scalar_one_or_none()  # now safe
 
     if waiting_booking:
         # Push waiting booking to worker queue
+        print({
+            "reservation_id": str(waiting_booking.booking_id),
+            "event_id": str(waiting_booking.event_id),
+            "user_id": str(waiting_booking.user_id),
+            "user_email": waiting_booking.user_email,
+            "Event_Name": waiting_booking.event_name,
+            "status":"confirmed"
+        })
+   
         await push_to_queue({
             "reservation_id": str(waiting_booking.booking_id),
             "event_id": str(waiting_booking.event_id),
             "user_id": str(waiting_booking.user_id),
             "user_email": waiting_booking.user_email,
-            "event_name": waiting_booking.event_name
+            "Event_Name": waiting_booking.event_name,
+            "status":"confirmed"
         })
         return waiting_booking.booking_id
 

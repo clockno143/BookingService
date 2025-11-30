@@ -7,6 +7,8 @@ from app.models import Booking
 from app.config import RABBITMQ_URL, GMAIL_USER, GMAIL_APP_PASSWORD
 from aiosmtplib import send
 from email.message import EmailMessage
+from sqlalchemy.dialects.postgresql import insert
+
 
 
 async def worker():
@@ -29,29 +31,36 @@ async def finalize_booking(payload: dict):
     event_id = payload["event_id"]
     user_id = payload["user_id"]
     user_email = payload["user_email"]
-    event_name= payload["Event_Name"] # add this to your queue message
-    status= payload["status"]
-
+    event_name = payload["Event_Name"]  # make sure keys match your queue message
+    status = payload["status"]
 
     async with async_session_maker() as session:
-        new_booking = Booking(
+        stmt = insert(Booking).values(
             booking_id=reservation_id,
             event_id=event_id,
             user_id=user_id,
-            user_email= user_email,
-            event_name= event_name,
+            user_email=user_email,
+            event_name=event_name,
             status=status
+        ).on_conflict_do_update(
+            index_elements=[Booking.booking_id],  # primary key
+            set_={
+                "status": status,
+                "event_id": event_id,
+                "user_id": user_id,
+                "user_email": user_email,
+                "event_name": event_name
+            }
         )
 
-        session.add(new_booking)
+        await session.execute(stmt)
         await session.commit()
 
-        print(f"[worker] Booking created: {reservation_id}")
+        print(f"[worker] Booking upserted: {reservation_id}")
 
         # Send email after saving to DB
-        await send_confirmation_email(user_email, event_name, reservation_id,status)
+        await send_confirmation_email(user_email, event_name, reservation_id, status)
         print(f"[worker] Email sent to {user_email}")
-
 
 async def send_confirmation_email(to_email: str, eventName: str, reservation_id: str,status):
     msg = EmailMessage()

@@ -25,9 +25,9 @@ async def cancel_booking_route(booking_id: str):
         cancel_result = await cancel_booking(booking_id, session)
 
         # 2️⃣ Promote a waiting booking asynchronously
-        if "booking_id" in cancel_result:  # optional: if cancel_booking returns the booking object
+        if cancel_result["status"]== "CANCELLED_SUCCESSFULLY":  # optional: if cancel_booking returns the booking object
             import asyncio
-            asyncio.create_task(promote_waiting_booking(cancel_result["booking_id"], session))
+            asyncio.create_task(promote_waiting_booking(cancel_result["event_id"], session))
 
         return cancel_result
     
