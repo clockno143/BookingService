@@ -1,10 +1,13 @@
 import uuid
-from sqlalchemy import update, select
+from sqlalchemy import update, select,func,insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from .models import AvailableSeats, Booking
 from aio_pika import connect_robust, Message
 import json
 from .config import RABBITMQ_URL
+from fastapi import HTTPException
+from typing import List
+from .schemas import BookingBatchResponse,UserBookingResponse,AvailableSeatsResponse,AvailableSeatsRequest
 
 async def reserve_seat(event_id: str, user_id: str, email:str,eventName:str ,session: AsyncSession):
     reservation_id = str(uuid.uuid4())
@@ -114,3 +117,94 @@ async def promote_waiting_booking(event_id: str, session: AsyncSession):
         return waiting_booking.booking_id
 
     return None
+async def get_total_bookings(event_id: str, session: AsyncSession):
+    """
+    Returns total number of bookings for a given event_id
+    """
+    event_id = event_id.strip()
+    stmt = select(func.count()).select_from(Booking).where(Booking.event_id == event_id)
+    result = await session.execute(stmt)
+    total = result.scalar()
+    return {"event_id": event_id, "total_bookings": total}
+
+async def get_booking_batch(event_id: str, offset: int = 0, batch_size: int = 5, session: AsyncSession = None) -> List[BookingBatchResponse]:
+    """
+    Returns a batch of bookings for a given event_id
+    Pagination is done via offset and batch_size
+    """
+    stmt = (
+        select(Booking)
+        .where(Booking.event_id == event_id)
+        .order_by(Booking.booking_time)
+        .offset(offset * batch_size)
+        .limit(batch_size)
+    )
+
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No bookings found for this event in the given batch")
+
+    # Convert rows to Pydantic schema
+    bookings = [BookingBatchResponse(
+        booking_id=str(row.booking_id),
+        event_id=str(row.event_id),
+        user_id=str(row.user_id),
+        booking_time=row.booking_time,
+        status=row.status,
+        event_name=row.event_name,
+        user_email=row.user_email
+    ) for row in rows]
+
+    return bookings
+
+async def get_user_bookings(user_id: str, session: AsyncSession) -> List[UserBookingResponse]:
+    """
+    Fetch all bookings for a given user_id including RESERVED, WAITING, and CANCELLED
+    """
+    stmt = select(Booking).where(Booking.user_id == user_id).order_by(Booking.booking_time.desc())
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No bookings found for this user")
+
+    bookings = [
+        UserBookingResponse(
+            booking_id=str(row.booking_id),
+            event_id=str(row.event_id),
+            event_name=row.event_name,
+            booking_time=row.booking_time,
+            status=row.status,
+            user_email=row.user_email
+        )
+        for row in rows
+    ]
+    return bookings
+
+async def create_available_seats(req: AvailableSeatsRequest, session: AsyncSession) -> AvailableSeatsResponse:
+    """
+    Create a new entry in available_seats table for an event.
+    """
+    # Check if event already exists
+    stmt = select(AvailableSeats).where(AvailableSeats.event_id == req.event_id)
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="AvailableSeats entry for this event already exists")
+
+    # Insert new record
+    stmt_insert = insert(AvailableSeats).values(
+        event_id=req.event_id,
+        remaining_seats=req.remaining_seats
+    ).returning(AvailableSeats.event_id, AvailableSeats.remaining_seats, AvailableSeats.version)
+
+    result = await session.execute(stmt_insert)
+    await session.commit()
+    row = result.fetchone()
+
+    return AvailableSeatsResponse(
+        event_id=str(row.event_id),
+        remaining_seats=row.remaining_seats,
+        version=row.version
+    )

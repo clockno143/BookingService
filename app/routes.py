@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from .schemas import BookEventRequest, BookEventResponse, BookingStatusResponse
+from .schemas import BookEventRequest, BookEventResponse, BookingStatusResponse,BookingBatchResponse
 from .database import get_session
-from .services import reserve_seat, get_booking_status,cancel_booking,promote_waiting_booking
+from .services import reserve_seat, get_booking_status,cancel_booking,promote_waiting_booking,get_booking_batch,get_total_bookings,get_user_bookings,create_available_seats
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-
+from typing import List
 from .database import async_session_maker
+from .schemas import UserBookingResponse,AvailableSeatsRequest, AvailableSeatsResponse
 
 router = APIRouter()
 
@@ -29,3 +30,28 @@ async def cancel_booking_route(booking_id: str):
             asyncio.create_task(promote_waiting_booking(cancel_result["booking_id"], session))
 
         return cancel_result
+    
+@router.get("/bookings/count")
+async def bookings_count(event_id: str, session: AsyncSession = Depends(get_session)):
+    return await get_total_bookings(event_id, session)
+
+@router.get("/bookings/batch", response_model=List[BookingBatchResponse])
+async def bookings_batch(event_id: str, offset: int = 0, batch_size: int = 5, session: AsyncSession = Depends(get_session)):
+    return await get_booking_batch(event_id, offset, batch_size, session)
+
+
+@router.get("/user/{user_id}/bookings", response_model=List[UserBookingResponse])
+async def user_bookings(user_id: str, session: AsyncSession = Depends(get_session)):
+    """
+    Get all bookings of a user with statuses RESERVED, WAITING, CANCELLED
+    """
+    return await get_user_bookings(user_id, session)
+
+
+
+@router.post("/available-seats", response_model=AvailableSeatsResponse)
+async def add_available_seats(req: AvailableSeatsRequest, session: AsyncSession = Depends(get_session)):
+    """
+    Create an entry in available_seats table for an event
+    """
+    return await create_available_seats(req, session)
