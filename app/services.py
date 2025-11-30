@@ -8,14 +8,17 @@ from .config import RABBITMQ_URL
 from fastapi import HTTPException
 from typing import List
 from .schemas import BookingBatchResponse,UserBookingResponse,AvailableSeatsResponse,AvailableSeatsRequest,AvailableSeatsGetResponse
-
-async def reserve_seat(event_id: str, user_id: str, email:str,eventName:str ,session: AsyncSession):
+import asyncio
+async def reserve_seat(event_id: str, user_id: str, email: str, eventName: str, session: AsyncSession):
     reservation_id = str(uuid.uuid4())
 
-    # Optimistic locking
+    # Atomic decrement: only one request can decrement last seat
     stmt = (
         update(AvailableSeats)
-        .where(AvailableSeats.event_id == event_id, AvailableSeats.remaining_seats > 0)
+        .where(
+            AvailableSeats.event_id == event_id,
+            AvailableSeats.remaining_seats > 0
+        )
         .values(
             remaining_seats=AvailableSeats.remaining_seats - 1,
             version=AvailableSeats.version + 1
@@ -25,33 +28,35 @@ async def reserve_seat(event_id: str, user_id: str, email:str,eventName:str ,ses
 
     result = await session.execute(stmt)
     updated_row = result.scalar()
+    await session.commit()  # commit the decrement
 
     if updated_row is None:
-        return {"status": "WAITLISTED", "message": "Event is full. You are added to waitlist.", "reservation_id": None}
+        # No seats left → waitlist
+        db_status = "waiting"
+        message = "Event is full. You are added to waitlist."
+        reservation_id_to_return = None
+    else:
+        # Seat successfully reserved
+        db_status = "confirmed"  # must match CHECK constraint in DB
+        message = "Seat reserved. Your booking is being processed."
+        reservation_id_to_return = reservation_id
 
-    # # Insert temporary booking
-    # temp_booking = Booking(
-    #     booking_id=reservation_id,
-    #     event_id=event_id,
-    #     user_id=user_id,
-    #     status="waiting"
-    # )
-    # session.add(temp_booking)
-    # await session.commit()
-
-    # Push to RabbitMQ asynchronously
+    # Push status to RabbitMQ queue
     await push_to_queue({
         "reservation_id": reservation_id,
         "event_id": str(event_id),
         "user_id": str(user_id),
-        "user_email":email,
-        "Event_Name": eventName
-
+        "user_email": email,
+        "Event_Name": eventName,
+        "status": db_status
     })
 
-    return {"status": "RESERVED", "message": "Seat reserved. Your booking is being processed.", "reservation_id": reservation_id}
-
-
+    # Return API-friendly status
+    return {
+        "status": "RESERVED" if db_status == "confirmed" else "WAITLISTED",
+        "message": message,
+        "reservation_id": reservation_id_to_return
+    }
 async def push_to_queue(payload: dict):
     connection = await connect_robust(RABBITMQ_URL)
     channel = await connection.channel()

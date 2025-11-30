@@ -30,6 +30,7 @@ async def finalize_booking(payload: dict):
     user_id = payload["user_id"]
     user_email = payload["user_email"]
     event_name= payload["Event_Name"] # add this to your queue message
+    status= payload["status"]
 
 
     async with async_session_maker() as session:
@@ -39,7 +40,7 @@ async def finalize_booking(payload: dict):
             user_id=user_id,
             user_email= user_email,
             event_name= event_name,
-            status="confirmed"
+            status=status
         )
 
         session.add(new_booking)
@@ -48,11 +49,11 @@ async def finalize_booking(payload: dict):
         print(f"[worker] Booking created: {reservation_id}")
 
         # Send email after saving to DB
-        await send_confirmation_email(user_email, event_name, reservation_id)
+        await send_confirmation_email(user_email, event_name, reservation_id,status)
         print(f"[worker] Email sent to {user_email}")
 
 
-async def send_confirmation_email(to_email: str, eventName: str, reservation_id: str):
+async def send_confirmation_email(to_email: str, eventName: str, reservation_id: str,status):
     msg = EmailMessage()
     msg["From"] = GMAIL_USER
     msg["To"] = to_email
@@ -62,7 +63,7 @@ async def send_confirmation_email(to_email: str, eventName: str, reservation_id:
         f"""
 Hello,
 
-Your booking has been confirmed!
+Your booking has been {status}!
 
 Event nmae: {eventName}
 Reservation ID: {reservation_id}
