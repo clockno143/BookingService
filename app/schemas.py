@@ -45,3 +45,9 @@ class AvailableSeatsResponse(BaseModel):
     event_id: str
     remaining_seats: int
     version: int
+
+
+class AvailableSeatsGetResponse(BaseModel):
+    event_id: str
+    remaining_seats: int
+    version: int

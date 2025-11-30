@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from .schemas import BookEventRequest, BookEventResponse, BookingStatusResponse,BookingBatchResponse
 from .database import get_session
-from .services import reserve_seat, get_booking_status,cancel_booking,promote_waiting_booking,get_booking_batch,get_total_bookings,get_user_bookings,create_available_seats
+from .services import reserve_seat, get_booking_status,cancel_booking,promote_waiting_booking,get_booking_batch,get_total_bookings,get_user_bookings,create_available_seats,get_available_seats
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from typing import List
 from .database import async_session_maker
-from .schemas import UserBookingResponse,AvailableSeatsRequest, AvailableSeatsResponse
+from .schemas import UserBookingResponse,AvailableSeatsRequest, AvailableSeatsResponse,AvailableSeatsGetResponse
 
 router = APIRouter()
 
@@ -55,3 +55,12 @@ async def add_available_seats(req: AvailableSeatsRequest, session: AsyncSession 
     Create an entry in available_seats table for an event
     """
     return await create_available_seats(req, session)
+
+
+@router.get("/available-seats/{event_id}", response_model=AvailableSeatsGetResponse)
+async def available_seats(event_id: str, session: AsyncSession = Depends(get_session)):
+    """
+    Get available seats for a given event_id
+    """
+    return await get_available_seats(event_id, session)
+

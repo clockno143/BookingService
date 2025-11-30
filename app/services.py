@@ -7,7 +7,7 @@ import json
 from .config import RABBITMQ_URL
 from fastapi import HTTPException
 from typing import List
-from .schemas import BookingBatchResponse,UserBookingResponse,AvailableSeatsResponse,AvailableSeatsRequest
+from .schemas import BookingBatchResponse,UserBookingResponse,AvailableSeatsResponse,AvailableSeatsRequest,AvailableSeatsGetResponse
 
 async def reserve_seat(event_id: str, user_id: str, email:str,eventName:str ,session: AsyncSession):
     reservation_id = str(uuid.uuid4())
@@ -204,6 +204,26 @@ async def create_available_seats(req: AvailableSeatsRequest, session: AsyncSessi
     row = result.fetchone()
 
     return AvailableSeatsResponse(
+        event_id=str(row.event_id),
+        remaining_seats=row.remaining_seats,
+        version=row.version
+    )
+
+
+async def get_available_seats(event_id: str, session: AsyncSession) -> AvailableSeatsGetResponse:
+    """
+    Fetch the available seats for a given event_id
+    """
+    event_id = event_id.strip()  # remove extra spaces/newlines
+
+    stmt = select(AvailableSeats).where(AvailableSeats.event_id == event_id)
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Event not found in available_seats")
+
+    return AvailableSeatsGetResponse(
         event_id=str(row.event_id),
         remaining_seats=row.remaining_seats,
         version=row.version
