@@ -94,12 +94,14 @@ async def cancel_booking(booking_id: str, session: AsyncSession):
     # 2. Update booking status to cancelled
     booking.status = "canceled"
     await session.commit()
+    await increment_available_seats(booking.event_id,session)
     return {"status":"CANCELLED_SUCCESSFULLY","message": "Booking  cancelled successfully","event_id": booking.event_id}
 async def promote_waiting_booking(event_id: str, session: AsyncSession):
     """
     Promote the earliest waiting booking (if any) for a given event.
     Pushes it to RabbitMQ queue for worker to confirm.
     """
+    await  decrement_available_seats(event_id,session)
     stmt_waiting = (
         select(Booking)
         .where(
@@ -245,3 +247,47 @@ async def get_available_seats(event_id: str, session: AsyncSession) -> Available
         remaining_seats=row.remaining_seats,
         version=row.version
     )
+
+async def decrement_available_seats(event_id: str, session: AsyncSession):
+    """
+    Atomically decrement available seats for an event.
+    Returns updated remaining seats or None if no seats left.
+    """
+    stmt = (
+        update(AvailableSeats)
+        .where(
+            AvailableSeats.event_id == event_id,
+            AvailableSeats.remaining_seats > 0
+        )
+        .values(
+            remaining_seats=AvailableSeats.remaining_seats - 1,
+            version=AvailableSeats.version + 1
+        )
+        .returning(AvailableSeats.remaining_seats)
+    )
+
+    result = await session.execute(stmt)
+    remaining = result.scalar()
+    await session.commit()
+
+    return remaining  # None if failed (means no seats)
+async def increment_available_seats(event_id: str, session: AsyncSession):
+    """
+    Atomically increment available seats for an event.
+    Called when a booking is cancelled.
+    """
+    stmt = (
+        update(AvailableSeats)
+        .where(AvailableSeats.event_id == event_id)
+        .values(
+            remaining_seats=AvailableSeats.remaining_seats + 1,
+            version=AvailableSeats.version + 1
+        )
+        .returning(AvailableSeats.remaining_seats)
+    )
+
+    result = await session.execute(stmt)
+    remaining = result.scalar()
+    await session.commit()
+
+    return remaining
